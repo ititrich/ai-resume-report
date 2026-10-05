@@ -226,10 +226,17 @@
   .faq details p { padding: 0 0 20px; color: var(--text-sub); }
 
   /* 8 푸터 */
-  footer { background: var(--bg-gray); padding: 40px 0 120px; font-size: 13px; color: var(--text-weak); line-height: 1.9; }
-  footer dl { display: grid; grid-template-columns: auto 1fr; gap: 0 12px; margin: 12px 0; }
-  footer dt { font-weight: 600; }
-  footer dd { min-height: 1.9em; }
+  footer { background: var(--bg-gray); padding: 40px 0 120px; font-size: 13px; color: var(--text-weak); line-height: 1.8; }
+  .f-links { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 20px; }
+  .f-links a { color: var(--text-sub); font-size: 14px; font-weight: 600; }
+  footer .biz { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin-bottom: 16px; }
+  footer .biz dt { font-weight: 600; white-space: nowrap; }
+  footer .biz dd { word-break: keep-all; }
+  footer .copy { font-size: 12px; }
+  @media (max-width: 400px) {
+    footer .biz { grid-template-columns: 1fr; gap: 0; }
+    footer .biz dt { margin-top: 8px; }
+  }
 
   /* 하단 고정 결제 바 (모바일) */
   .sticky-bar {
@@ -431,20 +438,26 @@
   </section>
 </main>
 
-<!-- 8. 푸터 -->
+<!-- 8. 푸터 (전자상거래법 표시사항 / 모든 페이지 동일) -->
 <footer>
   <div class="wrap">
-    <strong>AI 자소서 첨삭 리포트</strong>
-    <dl>
-      <dt>상호</dt><dd></dd>
-      <dt>대표자</dt><dd></dd>
-      <dt>사업자등록번호</dt><dd></dd>
-      <dt>통신판매업신고</dt><dd></dd>
-      <dt>주소</dt><dd></dd>
-      <dt>고객문의</dt><dd></dd>
+    <nav class="f-links">
+      <a href="terms.html">이용약관</a>
+      <a href="privacy.html">개인정보처리방침</a>
+      <a href="refund.html">환불정책</a>
+    </nav>
+    <dl class="biz">
+      <dt>상호</dt><dd>아이티리치</dd>
+      <dt>대표자명</dt><dd>김민형</dd>
+      <dt>사업장 주소</dt><dd>수원시 팔달구 효원로 278 업무시설동 602호</dd>
+      <dt>전화번호</dt><dd>010-3059-1727</dd>
+      <dt>이메일</dt><dd>1findout@naver.com</dd>
+      <dt>사업자등록번호</dt><dd>550-03-03027</dd>
+      <dt>통신판매업 신고번호</dt><dd>신고 준비 중</dd>
+      <dt>개인정보 보호책임자</dt><dd>김민형 (1findout@naver.com)</dd>
+      <dt>호스팅 제공</dt><dd>GitHub, Inc.</dd>
     </dl>
-    <p>이용약관 · 개인정보처리방침 · 환불정책</p>
-    <p>© AI 자소서 첨삭 리포트. All rights reserved.</p>
+    <p class="copy">© 아이티리치. All rights reserved.</p>
   </div>
 </footer>
 

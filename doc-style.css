@@ -1,0 +1,41 @@
+/* 약관·정책 페이지 공통 스타일 */
+:root {
+  --point: #2563eb;
+  --text: #191f28;
+  --text-sub: #4e5968;
+  --text-weak: #8b95a1;
+  --line: #e5e8eb;
+  --bg-gray: #f7f8fa;
+  --radius: 16px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  background: #fff; color: var(--text);
+  font-size: 16px; line-height: 1.8; word-break: keep-all; overflow-wrap: break-word;
+}
+.wrap { max-width: 640px; margin: 0 auto; padding: 0 20px; }
+main { padding: 48px 0 64px; }
+h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 8px; }
+h2 { font-size: 18px; font-weight: 700; margin: 32px 0 10px; }
+p, li { color: var(--text-sub); font-size: 15px; }
+ul, ol { padding-left: 20px; display: grid; gap: 6px; margin: 8px 0; }
+.updated { font-size: 14px; color: var(--text-weak); margin-bottom: 24px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 15px; }
+th, td { border: 1px solid var(--line); padding: 10px; text-align: left; color: var(--text-sub); }
+th { background: var(--bg-gray); font-weight: 600; color: var(--text); }
+.back { display: inline-block; margin-bottom: 24px; font-size: 14px; color: var(--point); }
+
+/* 푸터 (전자상거래법 표시사항 / 모든 페이지 동일) */
+footer { background: var(--bg-gray); padding: 40px 0; font-size: 13px; color: var(--text-weak); line-height: 1.8; }
+.f-links { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 20px; }
+.f-links a { color: var(--text-sub); font-size: 14px; font-weight: 600; }
+footer .biz { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin-bottom: 16px; }
+footer .biz dt { font-weight: 600; white-space: nowrap; }
+footer .biz dd { word-break: keep-all; }
+footer .copy { font-size: 12px; }
+@media (max-width: 400px) {
+  footer .biz { grid-template-columns: 1fr; gap: 0; }
+  footer .biz dt { margin-top: 8px; }
+}
