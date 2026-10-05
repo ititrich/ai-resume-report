@@ -123,6 +123,29 @@
   .tag-ok { background: var(--point-soft); color: var(--point); font-weight: 600; }
   .q-list { background: #fff; border-radius: 12px; padding: 16px 16px 16px 34px; display: grid; gap: 10px; }
   .q-list li { font-size: 15px; line-height: 1.6; color: var(--text); }
+
+  /* 상세 리포트 입력 양식 */
+  .f-label { display: block; font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+  .f-input, .f-textarea {
+    width: 100%; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius);
+    font: inherit; font-size: 16px; color: var(--text); background: #fff;
+  }
+  .f-textarea { min-height: 150px; resize: vertical; line-height: 1.6; }
+  .f-input::placeholder, .f-textarea::placeholder { color: var(--text-weak); }
+  .f-input:focus-visible, .f-textarea:focus-visible { outline: 3px solid var(--point); outline-offset: 2px; }
+  .q-item { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
+  .q-item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .q-item-head .f-label { margin-bottom: 0; }
+  .q-remove {
+    border: 0; background: none; color: var(--text-weak); font: inherit; font-size: 14px;
+    cursor: pointer; padding: 4px 8px; text-decoration: underline;
+  }
+  .q-item .f-input { margin-bottom: 8px; }
+  #paid-result {
+    margin-top: 20px; padding: 20px; border-radius: var(--radius);
+    background: var(--bg-gray); color: var(--text-sub); min-height: 64px;
+  }
+  #paid-result.is-empty { color: var(--text-weak); text-align: center; }
   .r-loading { text-align: center; color: var(--text-sub); }
   .r-error { color: #c92a2a; }
   .r-error .btn { margin-top: 14px; }
@@ -337,6 +360,26 @@
     </div>
   </section>
 
+  <!-- 5-1. 상세 리포트 입력 (전 문항) -->
+  <section id="paid-form">
+    <div class="wrap">
+      <p class="eyebrow">상세 리포트</p>
+      <h2>자소서 전 문항을<br>입력해 주세요</h2>
+      <p class="sub" style="margin-bottom:24px;">문항별로 질문과 답변을 그대로 붙여넣으시면 됩니다. 문항마다 따로 첨삭해 드립니다.</p>
+
+      <label class="f-label" for="paid-job">지원 직무</label>
+      <input type="text" id="paid-job" class="f-input" placeholder="예) 백엔드 개발자 (신입)" maxlength="100">
+
+      <div id="paid-items"></div>
+
+      <button type="button" class="btn btn-outline" id="paid-add" style="margin-top:12px;">+ 문항 추가</button>
+
+      <p class="counter small" style="margin:16px 4px 12px;"><span id="paid-count">0</span> / 6,000자</p>
+      <button type="button" class="btn btn-primary btn-lg" id="paid-btn">상세 리포트 받기</button>
+      <div id="paid-result" class="is-empty" aria-live="polite">전 문항 첨삭, 키워드 매칭표, 예상 면접질문 10개가 여기에 표시됩니다.</div>
+    </div>
+  </section>
+
   <!-- 6. 만든 사람 -->
   <section>
     <div class="wrap">
@@ -429,10 +472,13 @@
 
   // ===== 결제(상세 리포트) 버튼 =====
   // TODO: CONFIG.TOSS_CLIENT_KEY로 결제창을 붙이고, 결제 완료 후에만 아래를 실행하도록 바꾸세요.
-  // 결과 안에 나중에 생기는 버튼까지 한 번에 처리합니다
+  // 결제 버튼은 전 문항 입력 양식으로 보냅니다 (결과 안에 생기는 버튼 포함)
   document.addEventListener("click", (e) => {
     const btn = e.target.closest('[data-action="pay"]');
-    if (btn) runDiagnosis("paid");
+    if (!btn) return;
+    document.getElementById("paid-form").scrollIntoView({ behavior: "smooth", block: "start" });
+    const first = document.querySelector("#paid-items .f-input");
+    if (first) setTimeout(() => first.focus({ preventScroll: true }), 400);
   });
 
   // ===== 무료 진단 (껍데기) =====
@@ -445,60 +491,162 @@
     freeCount.textContent = freeInput.value.length.toLocaleString();
   });
 
-  freeBtn.addEventListener("click", () => runDiagnosis("free"));
+  freeBtn.addEventListener("click", runFree);
 
-  let lastMode = "free";
-
-  async function runDiagnosis(mode) {
-    lastMode = mode;
-    const paid = mode === "paid";
+  async function runFree() {
     const input = freeInput.value.trim();
 
     // 입력이 비어 있으면 호출하지 않습니다
     if (!input) {
       freeResult.classList.remove("is-empty");
       freeResult.innerHTML = '<p class="r-error">자소서 내용을 먼저 입력해 주세요.</p>';
-      document.getElementById("free").scrollIntoView({ behavior: "smooth", block: "start" });
       freeInput.focus();
       return;
     }
 
-    const loadingText = paid ? "상세 리포트를 만들고 있습니다 (약 1분)" : "분석 중입니다 (약 20초)";
-    const buttons = document.querySelectorAll('[data-action="pay"], #free-btn');
-    buttons.forEach((b) => { b.disabled = true; });
-    freeBtn.textContent = loadingText;
-    freeResult.classList.remove("is-empty");
-    freeResult.innerHTML = `<p class="r-loading"><span class="spinner"></span>${loadingText}</p>`;
-    document.getElementById("free").scrollIntoView({ behavior: "smooth", block: "start" });
+    await callApi({
+      path: "/free",
+      body: { mode: "free", input },
+      timeout: CONFIG.TIMEOUT_MS,
+      loadingText: "분석 중입니다 (약 20초)",
+      button: freeBtn,
+      buttonLabel: "무료로 진단받기",
+      target: freeResult,
+      paid: false,
+      retry: runFree
+    });
+  }
+
+  // ===== 상세 리포트 (전 문항 입력) =====
+  const paidItems = document.getElementById("paid-items");
+  const paidJob = document.getElementById("paid-job");
+  const paidBtn = document.getElementById("paid-btn");
+  const paidResult = document.getElementById("paid-result");
+  const paidCount = document.getElementById("paid-count");
+  const PAID_MAX_CHARS = 6000;
+
+  function addQuestion(question = "", answer = "") {
+    const index = paidItems.children.length + 1;
+    const item = document.createElement("div");
+    item.className = "q-item";
+    item.innerHTML = `
+      <div class="q-item-head">
+        <span class="f-label">${index}번 문항</span>
+        <button type="button" class="q-remove">삭제</button>
+      </div>
+      <input type="text" class="f-input" maxlength="200" placeholder="문항 질문 (예: 지원 동기와 입사 후 포부를 작성해 주세요)">
+      <textarea class="f-textarea" placeholder="이 문항에 쓴 답변을 그대로 붙여넣어 주세요."></textarea>`;
+    item.querySelector(".f-input").value = question;
+    item.querySelector("textarea").value = answer;
+    item.querySelector(".q-remove").addEventListener("click", () => {
+      if (paidItems.children.length <= 1) {
+        item.querySelector(".f-input").value = "";
+        item.querySelector("textarea").value = "";
+      } else {
+        item.remove();
+      }
+      renumber();
+      updatePaidCount();
+    });
+    item.querySelectorAll("input, textarea").forEach((el) => el.addEventListener("input", updatePaidCount));
+    paidItems.appendChild(item);
+    renumber();
+  }
+
+  function renumber() {
+    [...paidItems.children].forEach((item, i) => {
+      item.querySelector(".q-item-head .f-label").textContent = `${i + 1}번 문항`;
+    });
+  }
+
+  function collectPaidInput() {
+    return [...paidItems.children].map((item, i) => {
+      const question = item.querySelector(".f-input").value.trim();
+      const answer = item.querySelector("textarea").value.trim();
+      if (!answer) return "";
+      return `[${i + 1}번 문항] ${question || "(문항 질문 미입력)"}\n${answer}`;
+    }).filter(Boolean).join("\n\n");
+  }
+
+  function updatePaidCount() {
+    const length = collectPaidInput().length;
+    paidCount.textContent = length.toLocaleString();
+    paidCount.style.color = length > PAID_MAX_CHARS ? "#c92a2a" : "";
+  }
+
+  document.getElementById("paid-add").addEventListener("click", () => {
+    addQuestion();
+    paidItems.lastElementChild.querySelector(".f-input").focus();
+  });
+
+  addQuestion();
+  addQuestion();
+
+  paidBtn.addEventListener("click", runPaid);
+
+  async function runPaid() {
+    const input = collectPaidInput();
+
+    if (!input) {
+      paidResult.classList.remove("is-empty");
+      paidResult.innerHTML = '<p class="r-error">문항 답변을 먼저 입력해 주세요. 한 문항만 채워도 됩니다.</p>';
+      paidItems.querySelector("textarea").focus();
+      return;
+    }
+    if (input.length > PAID_MAX_CHARS) {
+      paidResult.classList.remove("is-empty");
+      paidResult.innerHTML = `<p class="r-error">입력이 ${PAID_MAX_CHARS.toLocaleString()}자를 넘었습니다. 지금 ${input.length.toLocaleString()}자입니다. 문항을 줄이거나 나눠서 분석해 주세요.</p>`;
+      return;
+    }
+
+    await callApi({
+      path: "/paid",
+      body: { mode: "paid", input, job: paidJob.value.trim() },
+      timeout: CONFIG.PAID_TIMEOUT_MS,
+      loadingText: "전 문항을 첨삭하고 있습니다 (약 1~2분)",
+      button: paidBtn,
+      buttonLabel: "상세 리포트 받기",
+      target: paidResult,
+      paid: true,
+      retry: runPaid
+    });
+  }
+
+  // ===== 공통 호출 =====
+  async function callApi(opt) {
+    opt.button.disabled = true;
+    opt.button.textContent = opt.loadingText;
+    opt.target.classList.remove("is-empty");
+    opt.target.innerHTML = `<p class="r-loading"><span class="spinner"></span>${opt.loadingText}</p>`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), paid ? CONFIG.PAID_TIMEOUT_MS : CONFIG.TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), opt.timeout);
 
     try {
-      const res = await fetch(CONFIG.API_URL + (paid ? "/paid" : "/free"), {
+      const res = await fetch(CONFIG.API_URL + opt.path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, input }),
+        body: JSON.stringify(opt.body),
         signal: controller.signal
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data || !data.ok) {
         throw new Error((data && data.error) || "진단에 실패했습니다.");
       }
-      renderResult(data.result, paid);
+      renderResult(data.result, opt.paid, opt.target);
     } catch (err) {
       const message = err.name === "AbortError"
         ? "시간이 초과되었습니다. 잠시 후 다시 시도해 주세요."
         : (err.message || "진단에 실패했습니다.");
-      renderError(message);
+      renderError(message, opt.target, opt.retry);
     } finally {
       clearTimeout(timer);
-      buttons.forEach((b) => { b.disabled = false; });
-      freeBtn.textContent = "무료로 진단받기";
+      opt.button.disabled = false;
+      opt.button.textContent = opt.buttonLabel;
     }
   }
 
-  function renderResult(result, paid) {
+  function renderResult(result, paid, target) {
     const parts = [];
 
     if (paid) {
@@ -559,20 +707,20 @@
       parts.push('<button type="button" class="btn btn-primary" data-action="pay" style="margin-top:16px;">29,000원 · 상세 리포트 받기</button>');
     }
 
-    freeResult.innerHTML = parts.join("") || "결과를 불러오지 못했습니다.";
+    target.innerHTML = parts.join("") || "결과를 불러오지 못했습니다.";
 
     // 막대 그래프를 채웁니다 (탭이 숨겨져 있어도 동작하도록 바로 지정)
     setTimeout(() => {
-      freeResult.querySelectorAll(".bar-fill").forEach((bar) => {
+      target.querySelectorAll(".bar-fill").forEach((bar) => {
         bar.style.width = Math.max(0, Math.min(100, Number(bar.dataset.score) || 0)) + "%";
       });
     }, 30);
   }
 
-  function renderError(message) {
-    freeResult.innerHTML = `<p class="r-error">${esc(message)}</p>
-      <button type="button" class="btn btn-outline" id="free-retry">다시 시도</button>`;
-    freeResult.querySelector("#free-retry").addEventListener("click", runDiagnosis);
+  function renderError(message, target, retry) {
+    target.innerHTML = `<p class="r-error">${esc(message)}</p>
+      <button type="button" class="btn btn-outline js-retry">다시 시도</button>`;
+    target.querySelector(".js-retry").addEventListener("click", retry);
   }
 
   // 서버가 보낸 값을 그대로 화면에 넣지 않고 escape 처리합니다
