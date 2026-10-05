@@ -371,12 +371,17 @@
       <label class="f-label" for="paid-job">지원 직무</label>
       <input type="text" id="paid-job" class="f-input" placeholder="예) 백엔드 개발자 (신입)" maxlength="100">
 
+      <label class="f-label" for="paid-phone" style="margin-top:20px;">휴대폰번호</label>
+      <input type="tel" id="paid-phone" class="f-input" placeholder="01012345678" maxlength="13" inputmode="numeric">
+      <p class="small" style="margin:6px 4px 0;">결제 확인용으로만 사용합니다.</p>
+
       <div id="paid-items"></div>
 
       <button type="button" class="btn btn-outline" id="paid-add" style="margin-top:12px;">+ 문항 추가</button>
 
       <p class="counter small" style="margin:16px 4px 12px;"><span id="paid-count">0</span> / 6,000자</p>
-      <button type="button" class="btn btn-primary btn-lg" id="paid-btn">상세 리포트 받기</button>
+      <button type="button" class="btn btn-primary btn-lg" id="paid-btn">29,000원 결제하고 리포트 받기</button>
+      <p class="small" style="text-align:center;margin-top:12px;">결제창이 새 창으로 열립니다. 결제가 끝나면 리포트가 자동으로 만들어집니다.</p>
       <div id="paid-result" class="is-empty" aria-live="polite">전 문항 첨삭, 키워드 매칭표, 예상 면접질문 10개가 여기에 표시됩니다.</div>
     </div>
   </section>
@@ -585,34 +590,112 @@
   addQuestion();
   addQuestion();
 
-  paidBtn.addEventListener("click", runPaid);
+  const paidPhone = document.getElementById("paid-phone");
+  const PAID_BTN_LABEL = "29,000원 결제하고 리포트 받기";
+  let currentOrderId = null;
 
-  async function runPaid() {
+  paidBtn.addEventListener("click", startPayment);
+
+  // 1) 결제창 열기
+  async function startPayment() {
     const input = collectPaidInput();
+    const phone = paidPhone.value.replace(/[^0-9]/g, "");
 
     if (!input) {
-      paidResult.classList.remove("is-empty");
-      paidResult.innerHTML = '<p class="r-error">문항 답변을 먼저 입력해 주세요. 한 문항만 채워도 됩니다.</p>';
+      showPaidError("문항 답변을 먼저 입력해 주세요. 한 문항만 채워도 됩니다.");
       paidItems.querySelector("textarea").focus();
       return;
     }
     if (input.length > PAID_MAX_CHARS) {
-      paidResult.classList.remove("is-empty");
-      paidResult.innerHTML = `<p class="r-error">입력이 ${PAID_MAX_CHARS.toLocaleString()}자를 넘었습니다. 지금 ${input.length.toLocaleString()}자입니다. 문항을 줄이거나 나눠서 분석해 주세요.</p>`;
+      showPaidError(`입력이 ${PAID_MAX_CHARS.toLocaleString()}자를 넘었습니다. 지금 ${input.length.toLocaleString()}자입니다. 문항을 줄여 주세요.`);
+      return;
+    }
+    if (phone.length < 10 || phone.length > 11) {
+      showPaidError("휴대폰번호를 정확히 입력해 주세요.");
+      paidPhone.focus();
       return;
     }
 
+    paidBtn.disabled = true;
+    paidBtn.textContent = "결제창을 여는 중입니다";
+    paidResult.classList.remove("is-empty");
+    paidResult.innerHTML = '<p class="r-loading"><span class="spinner"></span>결제창을 여는 중입니다</p>';
+
+    try {
+      const res = await fetch(CONFIG.API_URL + "/pay/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input, job: paidJob.value.trim(), phone })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || "결제창을 여는 데 실패했습니다.");
+      }
+      currentOrderId = data.orderId;
+      window.open(data.payurl, "payapp", "width=480,height=720");
+      paidResult.innerHTML = `<p class="r-loading"><span class="spinner"></span>결제를 기다리고 있습니다. 새로 열린 창에서 결제를 진행해 주세요.</p>
+        <p class="small" style="text-align:center;margin-top:10px;">창이 열리지 않았다면 <a href="${esc(data.payurl)}" target="_blank" rel="noopener">여기를 눌러 결제</a>해 주세요.</p>`;
+      paidBtn.textContent = "결제 대기 중";
+      waitForPayment(data.orderId);
+    } catch (err) {
+      showPaidError(err.message || "결제창을 여는 데 실패했습니다.", startPayment);
+      paidBtn.disabled = false;
+      paidBtn.textContent = PAID_BTN_LABEL;
+    }
+  }
+
+  // 2) 결제가 끝날 때까지 상태를 확인합니다 (최대 10분)
+  async function waitForPayment(orderId) {
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const res = await fetch(`${CONFIG.API_URL}/pay/status?order=${encodeURIComponent(orderId)}`);
+        const data = await res.json().catch(() => null);
+        if (data && data.ok && data.status !== "pending") {
+          runPaid(orderId);
+          return;
+        }
+      } catch (err) {
+        // 일시적인 통신 오류는 무시하고 계속 확인합니다
+      }
+    }
+    showPaidError("결제 확인이 너무 오래 걸립니다. 결제를 마치셨다면 다시 시도를 눌러 주세요.", () => runPaid(orderId));
+    paidBtn.disabled = false;
+    paidBtn.textContent = PAID_BTN_LABEL;
+  }
+
+  // 3) 결제가 끝난 주문으로 리포트를 만듭니다
+  async function runPaid(orderId) {
     await callApi({
       path: "/paid",
-      body: { mode: "paid", input, job: paidJob.value.trim() },
+      body: { mode: "paid", orderId: orderId || currentOrderId },
       timeout: CONFIG.PAID_TIMEOUT_MS,
-      loadingText: "전 문항을 첨삭하고 있습니다 (약 1~2분)",
+      loadingText: "결제가 확인됐습니다. 전 문항을 첨삭하고 있습니다 (약 1~2분)",
       button: paidBtn,
-      buttonLabel: "상세 리포트 받기",
+      buttonLabel: PAID_BTN_LABEL,
       target: paidResult,
       paid: true,
-      retry: runPaid
+      retry: () => runPaid(orderId)
     });
+  }
+
+  function showPaidError(message, retry) {
+    paidResult.classList.remove("is-empty");
+    if (retry) {
+      renderError(message, paidResult, retry);
+    } else {
+      paidResult.innerHTML = `<p class="r-error">${esc(message)}</p>`;
+    }
+  }
+
+  // 결제 후 돌아왔을 때 (returnurl) 리포트를 이어서 만듭니다
+  const orderFromUrl = new URLSearchParams(location.search).get("order");
+  if (orderFromUrl) {
+    document.getElementById("paid-form").hidden = false;
+    currentOrderId = orderFromUrl;
+    runPaid(orderFromUrl);
+    document.getElementById("paid-form").scrollIntoView({ block: "start" });
   }
 
   // ===== 공통 호출 =====

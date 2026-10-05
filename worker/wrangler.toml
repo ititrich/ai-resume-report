@@ -1,7 +1,10 @@
 name = "ai-resume-api"
 main = "src/index.js"
-# 오늘(UTC 2026-09-21)이 아니라 이틀 전 날짜
 compatibility_date = "2026-09-19"
+
+# 서버 자신의 공개 주소 (페이앱이 결제 결과를 보낼 주소를 만들 때 씁니다)
+[vars]
+PUBLIC_API_URL = "https://ai-resume-api.ai-resume-api.workers.dev"
 
 # 같은 IP 1분에 5번 제한 (Cloudflare Rate Limiting)
 [[ratelimits]]
@@ -9,5 +12,14 @@ name = "FREE_LIMITER"
 namespace_id = "1001"
 simple = { limit = 5, period = 60 }
 
-# API 키는 여기에 쓰지 마세요.
-# 배포 전에 `npx wrangler secret put ANTHROPIC_API_KEY` 로 등록합니다.
+# 주문 보관함 (결제 상태를 저장합니다)
+# id 값은 `npx wrangler kv namespace create ORDERS` 실행 후 나오는 값으로 바꿔 주세요.
+[[kv_namespaces]]
+binding = "ORDERS"
+id = "여기에_KV_ID를_붙여넣으세요"
+
+# 비밀값은 여기에 쓰지 마세요. 아래 명령으로 따로 등록합니다.
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put PAYAPP_USERID
+#   npx wrangler secret put PAYAPP_LINKKEY
+#   npx wrangler secret put PAYAPP_LINKVAL

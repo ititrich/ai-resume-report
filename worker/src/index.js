@@ -9,6 +9,13 @@ const PAID_TIMEOUT_MS = 170000; // 유료: 분량이 많아 더 오래 걸립니
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
+// 결제 (페이앱)
+const PAYAPP_API_URL = "https://api.payapp.kr/oapi/apiLoad.html";
+const PRICE = 29000;
+const GOOD_NAME = "AI 자소서 첨삭 리포트";
+const RETURN_PATH = "/ai-resume-report/"; // 결제 완료 후 돌아올 페이지
+const ORDER_TTL_SEC = 60 * 60 * 24 * 7; // 주문 보관 7일
+
 const SYSTEM_PROMPT = `당신은 IT 기업 채용 담당자 출신 자소서 첨삭 전문가입니다. 서류 3만 건을 검토한 경험으로 평가합니다.
 
 [평가 기준] 각 100점
@@ -104,6 +111,13 @@ const hits = new Map();
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+
+    // 페이앱 결제 통보는 페이앱 서버가 직접 호출합니다 (CORS 검사 대상 아님)
+    if (url.pathname === "/pay/feedback") {
+      return handleFeedback(request, env);
+    }
+
     const origin = request.headers.get("Origin") || "";
     const cors = corsHeaders(origin);
 
@@ -117,9 +131,18 @@ export default {
       return new Response(null, { status: 204, headers: cors });
     }
 
-    const url = new URL(request.url);
-    const mode = url.pathname === "/paid" ? "paid" : url.pathname === "/free" ? "free" : null;
-    if (!mode) {
+    // 결제 상태 조회
+    if (url.pathname === "/pay/status") {
+      const order = await getOrder(env, url.searchParams.get("order"));
+      if (!order) return json({ error: "주문을 찾을 수 없습니다." }, 404, cors);
+      return json({ ok: true, status: order.status }, 200, cors);
+    }
+
+    const route = url.pathname === "/paid" ? "paid"
+      : url.pathname === "/free" ? "free"
+      : url.pathname === "/pay/request" ? "pay-request"
+      : null;
+    if (!route) {
       return json({ error: "잘못된 주소입니다." }, 404, cors);
     }
     if (request.method !== "POST") {
@@ -145,11 +168,9 @@ export default {
       } catch {
         return json({ error: "요청 형식이 올바르지 않습니다." }, 400, cors);
       }
-      // 페이지는 input, 그 외 호출은 text 로 보냅니다. 둘 다 받습니다.
-      const sent = typeof body?.input === "string" ? body.input : body?.text;
-      const text = typeof sent === "string" ? sent.trim() : "";
-      if (!text) {
-        return json({ error: "자소서 내용을 입력해 주세요." }, 400, cors);
+
+      if (route === "pay-request") {
+        return await handlePayRequest(body, env, cors);
       }
 
       if (!env.ANTHROPIC_API_KEY) {
@@ -157,12 +178,24 @@ export default {
         return json({ error: "서비스 준비 중입니다. 잠시 후 다시 시도해 주세요." }, 503, cors);
       }
 
+      // 유료는 결제가 끝난 주문만 처리합니다
+      if (route === "paid") {
+        return await handlePaid(body, env, cors);
+      }
+
+      // 페이지는 input, 그 외 호출은 text 로 보냅니다. 둘 다 받습니다.
+      const sent = typeof body?.input === "string" ? body.input : body?.text;
+      const text = typeof sent === "string" ? sent.trim() : "";
+      if (!text) {
+        return json({ error: "자소서 내용을 입력해 주세요." }, 400, cors);
+      }
+
       const job = typeof body?.job === "string" ? body.job.trim().slice(0, 100) : "";
-      const answer = await callClaude(env.ANTHROPIC_API_KEY, text, job, mode);
-      return json({ ok: true, mode, result: mode === "free" ? trimToFree(answer) : answer }, 200, cors);
+      const answer = await callClaude(env.ANTHROPIC_API_KEY, text, job, "free");
+      return json({ ok: true, mode: "free", result: trimToFree(answer) }, 200, cors);
     } catch (err) {
       // 내부 에러 내용은 로그로만 남기고, 사용자에게는 짧은 안내만
-      console.error("free diagnosis failed:", err);
+      console.error("request failed:", err);
       const status = err?.status || 500;
       const message =
         status === 504 ? "진단이 오래 걸리고 있습니다. 잠시 후 다시 시도해 주세요."
@@ -172,6 +205,132 @@ export default {
     }
   },
 };
+
+// ===== 결제 (페이앱) =====
+
+// 1) 결제 요청: 주문을 저장하고 페이앱 결제창 주소를 돌려줍니다
+async function handlePayRequest(body, env, cors) {
+  if (!env.ORDERS) {
+    console.error("ORDERS KV binding is missing");
+    return json({ error: "결제 준비가 끝나지 않았습니다. 잠시 후 다시 시도해 주세요." }, 503, cors);
+  }
+  if (!env.PAYAPP_USERID) {
+    console.error("PAYAPP_USERID is not set");
+    return json({ error: "결제 준비가 끝나지 않았습니다. 잠시 후 다시 시도해 주세요." }, 503, cors);
+  }
+
+  const input = typeof body?.input === "string" ? body.input.trim() : "";
+  const job = typeof body?.job === "string" ? body.job.trim().slice(0, 100) : "";
+  const phone = String(body?.phone || "").replace(/[^0-9]/g, "");
+
+  if (!input) return json({ error: "자소서 내용을 먼저 입력해 주세요." }, 400, cors);
+  if (phone.length < 10 || phone.length > 11) {
+    return json({ error: "휴대폰번호를 정확히 입력해 주세요." }, 400, cors);
+  }
+
+  const orderId = crypto.randomUUID();
+  await env.ORDERS.put(
+    orderId,
+    JSON.stringify({ status: "pending", input, job, phone, createdAt: Date.now() }),
+    { expirationTtl: ORDER_TTL_SEC }
+  );
+
+  const form = new URLSearchParams({
+    cmd: "payrequest",
+    userid: env.PAYAPP_USERID,
+    goodname: GOOD_NAME,
+    price: String(PRICE),
+    recvphone: phone,
+    smsuse: "n",
+    checkretry: "y",
+    skip_cstpage: "y",
+    var1: orderId,
+    feedbackurl: `${env.PUBLIC_API_URL || ""}/pay/feedback`,
+    returnurl: `${ALLOWED_ORIGIN}${RETURN_PATH}?order=${orderId}`,
+  });
+  if (env.PAYAPP_LINKKEY) form.set("linkkey", env.PAYAPP_LINKKEY);
+
+  const res = await fetch(PAYAPP_API_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded; charset=utf-8" },
+    body: form,
+  });
+  const parsed = new URLSearchParams(await res.text());
+
+  if (parsed.get("state") !== "1" || !parsed.get("payurl")) {
+    console.error("payapp payrequest failed:", parsed.get("errorMessage"), parsed.get("errno"));
+    return json({ error: "결제창을 여는 데 실패했습니다. 잠시 후 다시 시도해 주세요." }, 502, cors);
+  }
+
+  return json({ ok: true, orderId, payurl: parsed.get("payurl") }, 200, cors);
+}
+
+// 2) 결제 통보: 페이앱이 결제 결과를 알려줍니다. 응답 본문은 반드시 SUCCESS 여야 합니다
+async function handleFeedback(request, env) {
+  const ok = () => new Response("SUCCESS", { status: 200, headers: { "content-type": "text/plain" } });
+  try {
+    const form = new URLSearchParams(await request.text());
+    const linkval = form.get("linkval");
+    const orderId = form.get("var1");
+    const payState = form.get("pay_state");
+    const price = Number(form.get("price"));
+
+    // 연동 VALUE가 일치해야 정상 호출입니다
+    if (!env.PAYAPP_LINKVAL || linkval !== env.PAYAPP_LINKVAL) {
+      console.error("feedback rejected: linkval mismatch");
+      return ok(); // 재시도를 막기 위해 SUCCESS로 응답하되 처리하지 않습니다
+    }
+    if (payState !== "4") return ok(); // 결제완료(4)만 처리
+    if (price !== PRICE) {
+      console.error("feedback rejected: price mismatch", price);
+      return ok();
+    }
+
+    const order = await getOrder(env, orderId);
+    if (!order) {
+      console.error("feedback: unknown order", orderId);
+      return ok();
+    }
+    if (order.status === "pending") {
+      // 여러 번 통보될 수 있어 이미 처리된 주문은 건드리지 않습니다
+      order.status = "paid";
+      order.mulNo = form.get("mul_no") || "";
+      order.paidAt = Date.now();
+      await env.ORDERS.put(orderId, JSON.stringify(order), { expirationTtl: ORDER_TTL_SEC });
+    }
+    return ok();
+  } catch (err) {
+    console.error("feedback failed:", err);
+    return ok();
+  }
+}
+
+// 3) 상세 리포트: 결제가 끝난 주문만 생성합니다
+async function handlePaid(body, env, cors) {
+  const orderId = typeof body?.orderId === "string" ? body.orderId : "";
+  const order = await getOrder(env, orderId);
+
+  if (!order) return json({ error: "주문을 찾을 수 없습니다. 결제를 다시 진행해 주세요." }, 404, cors);
+  if (order.status === "pending") {
+    return json({ error: "결제가 확인되지 않았습니다. 결제를 완료한 뒤 다시 시도해 주세요." }, 402, cors);
+  }
+  // 이미 만든 리포트는 다시 만들지 않고 그대로 돌려줍니다
+  if (order.status === "done" && order.result) {
+    return json({ ok: true, mode: "paid", result: order.result }, 200, cors);
+  }
+
+  const answer = await callClaude(env.ANTHROPIC_API_KEY, order.input, order.job, "paid");
+  order.status = "done";
+  order.result = answer;
+  await env.ORDERS.put(orderId, JSON.stringify(order), { expirationTtl: ORDER_TTL_SEC });
+  return json({ ok: true, mode: "paid", result: answer }, 200, cors);
+}
+
+async function getOrder(env, orderId) {
+  if (!env.ORDERS || !orderId) return null;
+  const raw = await env.ORDERS.get(orderId);
+  return raw ? JSON.parse(raw) : null;
+}
 
 // 무료 모드 규칙 적용: 점수 3개 + 수정안 1개 + 나머지 항목은 빈 배열
 function trimToFree(result) {
