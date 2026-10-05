@@ -511,12 +511,12 @@
 
     freeResult.innerHTML = parts.join("") || "결과를 불러오지 못했습니다.";
 
-    // 막대 그래프를 채웁니다
-    requestAnimationFrame(() => {
+    // 막대 그래프를 채웁니다 (탭이 숨겨져 있어도 동작하도록 바로 지정)
+    setTimeout(() => {
       freeResult.querySelectorAll(".bar-fill").forEach((bar) => {
         bar.style.width = Math.max(0, Math.min(100, Number(bar.dataset.score) || 0)) + "%";
       });
-    });
+    }, 30);
   }
 
   function renderError(message) {
