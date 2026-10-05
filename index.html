@@ -361,7 +361,8 @@
   </section>
 
   <!-- 5-1. 상세 리포트 입력 (전 문항) -->
-  <section id="paid-form">
+  <!-- 결제 버튼을 누르기 전에는 숨겨 둡니다 -->
+  <section id="paid-form" hidden>
     <div class="wrap">
       <p class="eyebrow">상세 리포트</p>
       <h2>자소서 전 문항을<br>입력해 주세요</h2>
@@ -476,7 +477,9 @@
   document.addEventListener("click", (e) => {
     const btn = e.target.closest('[data-action="pay"]');
     if (!btn) return;
-    document.getElementById("paid-form").scrollIntoView({ behavior: "smooth", block: "start" });
+    const form = document.getElementById("paid-form");
+    form.hidden = false; // 이때 입력 항목이 나타납니다
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
     const first = document.querySelector("#paid-items .f-input");
     if (first) setTimeout(() => first.focus({ preventScroll: true }), 400);
   });
