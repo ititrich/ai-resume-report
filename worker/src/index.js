@@ -4,7 +4,8 @@ const ALLOWED_ORIGIN = "https://ititrich.github.io";
 const MAX_BODY_CHARS = 8000;
 const RATE_LIMIT = 5; // 같은 IP 1분당 최대 호출 수
 const RATE_WINDOW_MS = 60 * 1000;
-const CLAUDE_TIMEOUT_MS = 25000; // 페이지 쪽 TIMEOUT_MS(30초)보다 짧게
+const CLAUDE_TIMEOUT_MS = 25000; // 무료: 페이지 쪽 TIMEOUT_MS(30초)보다 짧게
+const PAID_TIMEOUT_MS = 170000; // 유료: 분량이 많아 더 오래 걸립니다 (페이지는 180초)
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
@@ -117,7 +118,8 @@ export default {
     }
 
     const url = new URL(request.url);
-    if (url.pathname !== "/free") {
+    const mode = url.pathname === "/paid" ? "paid" : url.pathname === "/free" ? "free" : null;
+    if (!mode) {
       return json({ error: "잘못된 주소입니다." }, 404, cors);
     }
     if (request.method !== "POST") {
@@ -155,10 +157,9 @@ export default {
         return json({ error: "서비스 준비 중입니다. 잠시 후 다시 시도해 주세요." }, 503, cors);
       }
 
-      // 지금은 무료 모드만 엽니다. 유료는 다음 단계에서 붙입니다.
       const job = typeof body?.job === "string" ? body.job.trim().slice(0, 100) : "";
-      const result = trimToFree(await callClaude(env.ANTHROPIC_API_KEY, text, job));
-      return json({ ok: true, result }, 200, cors);
+      const answer = await callClaude(env.ANTHROPIC_API_KEY, text, job, mode);
+      return json({ ok: true, mode, result: mode === "free" ? trimToFree(answer) : answer }, 200, cors);
     } catch (err) {
       // 내부 에러 내용은 로그로만 남기고, 사용자에게는 짧은 안내만
       console.error("free diagnosis failed:", err);
@@ -187,9 +188,10 @@ function trimToFree(result) {
   };
 }
 
-async function callClaude(apiKey, text, job) {
+async function callClaude(apiKey, text, job, mode) {
+  const paid = mode === "paid";
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), paid ? PAID_TIMEOUT_MS : CLAUDE_TIMEOUT_MS);
 
   let res;
   try {
@@ -205,17 +207,18 @@ async function callClaude(apiKey, text, job) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 4000,
+        max_tokens: paid ? 16000 : 4000,
         fallbacks: "default",
         system: SYSTEM_PROMPT,
         output_config: {
-          effort: "low", // 간이진단이라 빠르고 저렴하게
+          // 무료는 빠르고 저렴하게, 유료는 항목을 모두 채워야 하므로 더 깊게
+          effort: paid ? "high" : "low",
           format: { type: "json_schema", schema: RESULT_SCHEMA },
         },
         messages: [
           {
             role: "user",
-            content: `mode: "free"\n지원 직무: ${job || "미입력(IT 직군 일반 기준으로 평가)"}\n\n[자소서]\n${text}`,
+            content: `mode: "${paid ? "paid" : "free"}"\n지원 직무: ${job || "미입력(IT 직군 일반 기준으로 평가)"}\n\n[자소서]\n${text}`,
           },
         ],
       }),

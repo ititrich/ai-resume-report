@@ -107,6 +107,22 @@
   .fix-arrow { text-align: center; color: var(--text-weak); margin: 8px 0; }
   .fix-why { margin-top: 10px; font-size: 14px; line-height: 1.6; color: var(--text-sub); }
   .r-next { margin-top: 20px; text-align: center; font-size: 15px; color: var(--text); font-weight: 600; }
+  .r-badge {
+    display: inline-block; margin-bottom: 16px; padding: 6px 14px; border-radius: 999px;
+    background: var(--point); color: #fff; font-size: 14px; font-weight: 700;
+  }
+  .kw-box { background: #fff; border-radius: 12px; padding: 16px; }
+  .kw-head { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+  .kw-head.ok { color: var(--point); }
+  .kw-head.no { color: var(--text-weak); margin-top: 16px; }
+  .kw-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag {
+    display: inline-block; padding: 5px 12px; border-radius: 999px;
+    background: var(--bg-gray); color: var(--text-sub); font-size: 14px;
+  }
+  .tag-ok { background: var(--point-soft); color: var(--point); font-weight: 600; }
+  .q-list { background: #fff; border-radius: 12px; padding: 16px 16px 16px 34px; display: grid; gap: 10px; }
+  .q-list li { font-size: 15px; line-height: 1.6; color: var(--text); }
   .r-loading { text-align: center; color: var(--text-sub); }
   .r-error { color: #c92a2a; }
   .r-error .btn { margin-top: 14px; }
@@ -395,8 +411,9 @@
 <script>
   // ===== 설정 상수 (API 키·비밀키는 절대 여기에 넣지 마세요) =====
   const CONFIG = {
-    API_URL: "https://ai-resume-api.ai-resume-api.workers.dev", // 뒤에 /free 를 붙여 호출합니다
+    API_URL: "https://ai-resume-api.ai-resume-api.workers.dev", // 뒤에 /free, /paid 를 붙여 호출합니다
     TIMEOUT_MS: 30000,
+    PAID_TIMEOUT_MS: 180000, // 상세 리포트는 분량이 많아 더 오래 걸립니다
     TOSS_CLIENT_KEY: ""
   };
 
@@ -410,12 +427,12 @@
     toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2000);
   }
 
-  // ===== 결제 버튼 (껍데기) =====
-  document.querySelectorAll('[data-action="pay"]').forEach((btn) => {
-    btn.addEventListener("click", () => {
-      // TODO: CONFIG.TOSS_CLIENT_KEY로 토스페이먼츠 결제창 연동
-      showToast("준비 중입니다");
-    });
+  // ===== 결제(상세 리포트) 버튼 =====
+  // TODO: CONFIG.TOSS_CLIENT_KEY로 결제창을 붙이고, 결제 완료 후에만 아래를 실행하도록 바꾸세요.
+  // 결과 안에 나중에 생기는 버튼까지 한 번에 처리합니다
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-action="pay"]');
+    if (btn) runDiagnosis("paid");
   });
 
   // ===== 무료 진단 (껍데기) =====
@@ -428,39 +445,47 @@
     freeCount.textContent = freeInput.value.length.toLocaleString();
   });
 
-  freeBtn.addEventListener("click", runDiagnosis);
+  freeBtn.addEventListener("click", () => runDiagnosis("free"));
 
-  async function runDiagnosis() {
+  let lastMode = "free";
+
+  async function runDiagnosis(mode) {
+    lastMode = mode;
+    const paid = mode === "paid";
     const input = freeInput.value.trim();
 
     // 입력이 비어 있으면 호출하지 않습니다
     if (!input) {
       freeResult.classList.remove("is-empty");
       freeResult.innerHTML = '<p class="r-error">자소서 내용을 먼저 입력해 주세요.</p>';
+      document.getElementById("free").scrollIntoView({ behavior: "smooth", block: "start" });
       freeInput.focus();
       return;
     }
 
-    freeBtn.disabled = true;
-    freeBtn.textContent = "분석 중입니다 (약 20초)";
+    const loadingText = paid ? "상세 리포트를 만들고 있습니다 (약 1분)" : "분석 중입니다 (약 20초)";
+    const buttons = document.querySelectorAll('[data-action="pay"], #free-btn');
+    buttons.forEach((b) => { b.disabled = true; });
+    freeBtn.textContent = loadingText;
     freeResult.classList.remove("is-empty");
-    freeResult.innerHTML = '<p class="r-loading"><span class="spinner"></span>분석 중입니다 (약 20초)</p>';
+    freeResult.innerHTML = `<p class="r-loading"><span class="spinner"></span>${loadingText}</p>`;
+    document.getElementById("free").scrollIntoView({ behavior: "smooth", block: "start" });
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CONFIG.TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), paid ? CONFIG.PAID_TIMEOUT_MS : CONFIG.TIMEOUT_MS);
 
     try {
-      const res = await fetch(CONFIG.API_URL + "/free", {
+      const res = await fetch(CONFIG.API_URL + (paid ? "/paid" : "/free"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "free", input }),
+        body: JSON.stringify({ mode, input }),
         signal: controller.signal
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data || !data.ok) {
         throw new Error((data && data.error) || "진단에 실패했습니다.");
       }
-      renderResult(data.result);
+      renderResult(data.result, paid);
     } catch (err) {
       const message = err.name === "AbortError"
         ? "시간이 초과되었습니다. 잠시 후 다시 시도해 주세요."
@@ -468,13 +493,17 @@
       renderError(message);
     } finally {
       clearTimeout(timer);
-      freeBtn.disabled = false;
+      buttons.forEach((b) => { b.disabled = false; });
       freeBtn.textContent = "무료로 진단받기";
     }
   }
 
-  function renderResult(result) {
+  function renderResult(result, paid) {
     const parts = [];
+
+    if (paid) {
+      parts.push('<p class="r-badge">상세 리포트</p>');
+    }
 
     const scores = Object.entries(result.scores || {});
     if (scores.length) {
@@ -505,8 +534,29 @@
           </div>`).join("") + "</div>");
     }
 
+    const kwIn = (result.keywords && result.keywords["있음"]) || [];
+    const kwOut = (result.keywords && result.keywords["없음"]) || [];
+    if (kwIn.length || kwOut.length) {
+      parts.push(`<div class="r-block"><p class="r-title">직무 키워드 매칭표</p>
+        <div class="kw-box">
+          <p class="kw-head ok">자소서에 있음 (${kwIn.length}개)</p>
+          <p class="kw-tags">${kwIn.map((k) => `<span class="tag tag-ok">${esc(k)}</span>`).join("") || "<span class=\"tag\">없음</span>"}</p>
+          <p class="kw-head no">빠져 있음 (${kwOut.length}개)</p>
+          <p class="kw-tags">${kwOut.map((k) => `<span class="tag">${esc(k)}</span>`).join("") || "<span class=\"tag\">없음</span>"}</p>
+        </div></div>`);
+    }
+
+    const questions = result.questions || [];
+    if (questions.length) {
+      parts.push(`<div class="r-block"><p class="r-title">예상 면접질문 ${questions.length}개</p>
+        <ol class="q-list">${questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ol></div>`);
+    }
+
     if (result.next) {
       parts.push(`<p class="r-next">${esc(result.next)}</p>`);
+    }
+    if (!paid) {
+      parts.push('<button type="button" class="btn btn-primary" data-action="pay" style="margin-top:16px;">29,000원 · 상세 리포트 받기</button>');
     }
 
     freeResult.innerHTML = parts.join("") || "결과를 불러오지 못했습니다.";
