@@ -88,6 +88,39 @@
   }
   #free-result.is-empty { color: var(--text-weak); text-align: center; }
 
+  /* 진단 결과 */
+  .r-title { font-size: 16px; font-weight: 800; color: var(--text); margin-bottom: 12px; }
+  .r-block + .r-block { margin-top: 24px; }
+  .bar-row + .bar-row { margin-top: 14px; }
+  .bar-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; margin-bottom: 6px; }
+  .bar-head b { color: var(--text); }
+  .bar-head .score { font-weight: 800; color: var(--point); font-variant-numeric: tabular-nums; }
+  .bar-track { height: 10px; border-radius: 999px; background: #e9edf2; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; background: var(--point); width: 0; transition: width .6s ease; }
+  .bar-why { font-size: 14px; line-height: 1.6; margin-top: 6px; color: var(--text-sub); }
+  .r-summary { background: #fff; border-radius: 12px; padding: 16px; font-size: 15px; line-height: 1.7; color: var(--text); }
+  .fix-card { background: #fff; border-radius: 12px; padding: 16px; font-size: 15px; }
+  .fix-card + .fix-card { margin-top: 12px; }
+  .fix-label { font-size: 12px; font-weight: 700; color: var(--text-weak); margin-bottom: 4px; }
+  .fix-before { background: var(--bg-gray); color: var(--text-weak); padding: 12px; border-radius: 10px; line-height: 1.6; }
+  .fix-after { background: var(--point-soft); color: var(--text); padding: 12px; border-radius: 10px; line-height: 1.6; }
+  .fix-arrow { text-align: center; color: var(--text-weak); margin: 8px 0; }
+  .fix-why { margin-top: 10px; font-size: 14px; line-height: 1.6; color: var(--text-sub); }
+  .r-next { margin-top: 20px; text-align: center; font-size: 15px; color: var(--text); font-weight: 600; }
+  .r-loading { text-align: center; color: var(--text-sub); }
+  .r-error { color: #c92a2a; }
+  .r-error .btn { margin-top: 14px; }
+  .spinner {
+    display: inline-block; width: 16px; height: 16px; margin-right: 8px; vertical-align: -3px;
+    border: 2px solid #d6dde6; border-top-color: var(--point); border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; }
+    .bar-fill { transition: none; }
+  }
+
   /* 4 결과 샘플 */
   .sample-card {
     border: 1px solid var(--line); border-radius: var(--radius);
@@ -362,7 +395,7 @@
 <script>
   // ===== 설정 상수 (API 키·비밀키는 절대 여기에 넣지 마세요) =====
   const CONFIG = {
-    API_URL: "",
+    API_URL: "https://ai-resume-api.ai-resume-api.workers.dev", // 뒤에 /free 를 붙여 호출합니다
     TIMEOUT_MS: 30000,
     TOSS_CLIENT_KEY: ""
   };
@@ -395,12 +428,109 @@
     freeCount.textContent = freeInput.value.length.toLocaleString();
   });
 
-  freeBtn.addEventListener("click", () => {
-    // TODO: CONFIG.API_URL로 요청 (CONFIG.TIMEOUT_MS 적용)
+  freeBtn.addEventListener("click", runDiagnosis);
+
+  async function runDiagnosis() {
+    const input = freeInput.value.trim();
+
+    // 입력이 비어 있으면 호출하지 않습니다
+    if (!input) {
+      freeResult.classList.remove("is-empty");
+      freeResult.innerHTML = '<p class="r-error">자소서 내용을 먼저 입력해 주세요.</p>';
+      freeInput.focus();
+      return;
+    }
+
+    freeBtn.disabled = true;
+    freeBtn.textContent = "분석 중입니다 (약 20초)";
     freeResult.classList.remove("is-empty");
-    freeResult.textContent = "준비 중입니다. 곧 무료 진단을 이용하실 수 있어요.";
-    showToast("준비 중입니다");
-  });
+    freeResult.innerHTML = '<p class="r-loading"><span class="spinner"></span>분석 중입니다 (약 20초)</p>';
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.TIMEOUT_MS);
+
+    try {
+      const res = await fetch(CONFIG.API_URL + "/free", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "free", input }),
+        signal: controller.signal
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || "진단에 실패했습니다.");
+      }
+      renderResult(data.result);
+    } catch (err) {
+      const message = err.name === "AbortError"
+        ? "시간이 초과되었습니다. 잠시 후 다시 시도해 주세요."
+        : (err.message || "진단에 실패했습니다.");
+      renderError(message);
+    } finally {
+      clearTimeout(timer);
+      freeBtn.disabled = false;
+      freeBtn.textContent = "무료로 진단받기";
+    }
+  }
+
+  function renderResult(result) {
+    const parts = [];
+
+    const scores = Object.entries(result.scores || {});
+    if (scores.length) {
+      parts.push('<div class="r-block"><p class="r-title">진단 점수</p>' + scores.map(([name, item]) => {
+        const score = Number(item && item.점수) || 0;
+        return `<div class="bar-row">
+            <div class="bar-head"><b>${esc(name)}</b><span class="score">${score}점</span></div>
+            <div class="bar-track"><div class="bar-fill" data-score="${score}"></div></div>
+            <p class="bar-why">${esc((item && item.근거) || "")}</p>
+          </div>`;
+      }).join("") + "</div>");
+    }
+
+    if (result.summary) {
+      parts.push(`<div class="r-block"><p class="r-title">가장 치명적인 문제</p><div class="r-summary">${esc(result.summary)}</div></div>`);
+    }
+
+    const fixes = result.fixes || [];
+    if (fixes.length) {
+      parts.push('<div class="r-block"><p class="r-title">이렇게 고쳐 보세요</p>' + fixes.map((fix) => `
+          <div class="fix-card">
+            <p class="fix-label">수정 전</p>
+            <p class="fix-before">${esc(fix.before)}</p>
+            <p class="fix-arrow">↓</p>
+            <p class="fix-label">수정 후</p>
+            <p class="fix-after">${esc(fix.after)}</p>
+            <p class="fix-why">${esc(fix.why)}</p>
+          </div>`).join("") + "</div>");
+    }
+
+    if (result.next) {
+      parts.push(`<p class="r-next">${esc(result.next)}</p>`);
+    }
+
+    freeResult.innerHTML = parts.join("") || "결과를 불러오지 못했습니다.";
+
+    // 막대 그래프를 채웁니다
+    requestAnimationFrame(() => {
+      freeResult.querySelectorAll(".bar-fill").forEach((bar) => {
+        bar.style.width = Math.max(0, Math.min(100, Number(bar.dataset.score) || 0)) + "%";
+      });
+    });
+  }
+
+  function renderError(message) {
+    freeResult.innerHTML = `<p class="r-error">${esc(message)}</p>
+      <button type="button" class="btn btn-outline" id="free-retry">다시 시도</button>`;
+    freeResult.querySelector("#free-retry").addEventListener("click", runDiagnosis);
+  }
+
+  // 서버가 보낸 값을 그대로 화면에 넣지 않고 escape 처리합니다
+  function esc(value) {
+    const div = document.createElement("div");
+    div.textContent = value == null ? "" : String(value);
+    return div.innerHTML;
+  }
 
   // ===== 히어로 결제 버튼이 화면 밖으로 나가면 하단 바 표시 =====
   const stickyBar = document.getElementById("sticky-bar");
